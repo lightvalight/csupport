@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="fi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Elatuslaskuri</title>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #0d1f17; }
+    input, select { outline: none; }
+    input::placeholder { color: #445a50; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useCallback } = React;
+
+    const YLAPITOKULUT = {
+      "0-6":   { base: 293, label: "0–6 v" },
+      "7-12":  { base: 362, label: "7–12 v" },
+      "13-17": { base: 431, label: "13–17 v" },
+    };
+
+    const ASUMIS_PROSENTTI = { 1: 0.23, 2: 0.19, 3: 0.16 };
+    function lapsenAsumisOsuus(lapsiMaara) {
+      if (lapsiMaara <= 1) return ASUMIS_PROSENTTI[1];
+      if (lapsiMaara === 2) return ASUMIS_PROSENTTI[2];
+      return ASUMIS_PROSENTTI[3];
+    }
+
+    const OMA_ELATUS = 823;
+
+    const LAPSILISA = [94.88, 104.84, 133.79, 173.24, 192.69];
+    function lapsilisaPerLapsi(lapsiMaara) {
+      let yht = 0;
+      for (let i = 0; i < lapsiMaara; i++) {
+        yht += LAPSILISA[Math.min(i, LAPSILISA.length - 1)];
+      }
+      return yht / lapsiMaara;
+    }
+
+    const YKSINHUOLTAJAKOROTUS = 73.30;
+
+    const LUONAPITO_HAARUKAT = [
+      { value: "0",  label: "Alle 7 yötä / kk – ei vähennystä", "0-6": 0,     "7-12": 0,     "13-17": 0     },
+      { value: "7",  label: "7–9 yötä / kk",                    "0-6": 37.00, "7-12": 41.00, "13-17": 44.50 },
+      { value: "10", label: "10–12 yötä / kk",                  "0-6": 51.00, "7-12": 55.00, "13-17": 62.50 },
+      { value: "13", label: "13–15 yötä / kk",                  "0-6": 67.00, "7-12": 71.50, "13-17": 77.50 },
+    ];
+
+    function laskeluonapito(haarukkaValue, ikaryhma) {
+      const rivi = LUONAPITO_HAARUKAT.find(r => r.value === haarukkaValue) || LUONAPITO_HAARUKAT[0];
+      return rivi[ikaryhma] ?? 0;
+    }
+
+    function euro(n) {
+      if (isNaN(n) || n === null) return "–";
+      return n.toFixed(2).replace(".", ",") + " €";
+    }
+
+    function parseNum(s) {
+      if (!s) return 0;
+      return parseFloat(String(s).replace(",", ".")) || 0;
+    }
+
+    const ikaryhmasta = (ika) => {
+      if (ika <= 6)  return "0-6";
+      if (ika <= 12) return "7-12";
+      return "13-17";
+    };
+
+    function Section({ title, children }) {
+      return (
+        <div style={{
+          background: "rgba(255,255,255,0.04)",
+          border: "1px solid rgba(255,255,255,0.09)",
+          borderRadius: 16, padding: "28px 32px", marginBottom: 20,
+        }}>
+          <div style={{
+            fontSize: 11, fontFamily: "'DM Mono', monospace",
+            letterSpacing: "0.16em", color: "#7eb8a4",
+            textTransform: "uppercase", marginBottom: 22,
+          }}>{title}</div>
+          {children}
+        </div>
+      );
+    }
+
+    function Field({ label, hint, children }) {
+      return (
+        <div style={{ marginBottom: 18 }}>
+          <label style={{ display: "block", fontSize: 13, color: "#b8c8c0", marginBottom: 6, fontFamily: "'DM Sans', sans-serif" }}>
+            {label}
+            {hint && <span style={{ color: "#556e64", marginLeft: 8, fontSize: 12 }}>{hint}</span>}
+          </label>
+          {children}
+        </div>
+      );
+    }
+
+    const inputStyle = {
+      width: "100%", background: "rgba(255,255,255,0.06)",
+      border: "1px solid rgba(255,255,255,0.12)", borderRadius: 8,
+      padding: "10px 14px", color: "#e8f0eb", fontSize: 15,
+      fontFamily: "'DM Sans', sans-serif", outline: "none", boxSizing: "border-box",
+    };
+
+    function Input({ value, onChange, placeholder }) {
+      return <input type="text" value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} style={inputStyle} />;
+    }
+
+    function Select({ value, onChange, options }) {
+      return (
+        <select value={value} onChange={e => onChange(e.target.value)} style={{ ...inputStyle, cursor: "pointer" }}>
+          {options.map(o => <option key={o.value} value={o.value} style={{ background: "#1a2820" }}>{o.label}</option>)}
+        </select>
+      );
+    }
+
+    function Row({ label, value, bold, muted }) {
+      return (
+        <div style={{
+          display: "flex", justifyContent: "space-between", alignItems: "baseline",
+          padding: "7px 0", borderBottom: "1px solid rgba(255,255,255,0.05)",
+        }}>
+          <span style={{ fontSize: muted ? 12 : 13, color: bold ? "#d4e8da" : muted ? "#445a50" : "#8aada0", fontFamily: "'DM Sans', sans-serif" }}>{label}</span>
+          <span style={{
+            fontSize: bold ? 15 : 13, fontWeight: bold ? 600 : 400,
+            color: bold ? "#e8f5ee" : muted ? "#445a50" : "#c4dcd0",
+            fontFamily: bold ? "'DM Mono', monospace" : "'DM Sans', sans-serif",
+          }}>{value}</span>
+        </div>
+      );
+    }
+
+    function LapsiForm({ lapsi, index, onChange, onRemove }) {
+      return (
+        <div style={{
+          background: "rgba(126,184,164,0.06)", border: "1px solid rgba(126,184,164,0.15)",
+          borderRadius: 12, padding: "18px 20px", marginBottom: 14, position: "relative",
+        }}>
+          <div style={{ fontSize: 11, fontFamily: "'DM Mono', monospace", color: "#7eb8a4", letterSpacing: "0.12em", marginBottom: 14 }}>
+            LAPSI {index + 1}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <Field label="Ikä (vuotta)">
+              <Input value={lapsi.ika} onChange={v => onChange(index, "ika", v)} placeholder="esim. 8" />
+            </Field>
+            <Field label="Erityiset kulut €/kk" hint="(harrastukset, terveys…)">
+              <Input value={lapsi.erityiset} onChange={v => onChange(index, "erityiset", v)} placeholder="0" />
+            </Field>
+          </div>
+          <Field label="Tapaamisöitä kuukaudessa">
+            <Select
+              value={lapsi.yot}
+              onChange={v => onChange(index, "yot", v)}
+              options={LUONAPITO_HAARUKAT.map(h => ({ value: h.value, label: h.label }))}
+            />
+          </Field>
+          {index > 0 && (
+            <button onClick={() => onRemove(index)} style={{
+              position: "absolute", top: 14, right: 16,
+              background: "none", border: "none", color: "#556e64", cursor: "pointer", fontSize: 18,
+            }}>×</button>
+          )}
+        </div>
+      );
+    }
+
+    function VanhempiForm({ data, label, onChange }) {
+      return (
+        <Section title={label}>
+          <Field label="Nettotulot €/kk" hint="(palkka, etuudet, muut tulot)">
+            <Input value={data.tulot} onChange={v => onChange("tulot", v)} placeholder="esim. 2500" />
+          </Field>
+          <Field label="Asumiskulut €/kk" hint="(vuokra tai vastike)">
+            <Input value={data.asuminen} onChange={v => onChange("asuminen", v)} placeholder="esim. 800" />
+          </Field>
+          <Field label="Muita elatettavia lapsia">
+            <Select
+              value={data.muutLapset}
+              onChange={v => onChange("muutLapset", v)}
+              options={[
+                { value: "0", label: "Ei muita lapsia" },
+                { value: "1", label: "1 lapsi" },
+                { value: "2", label: "2 lasta" },
+                { value: "3", label: "3 lasta tai enemmän" },
+              ]}
+            />
+          </Field>
+          <Field label="Omat erityiset kulut €/kk" hint="(esim. lääkkeet, velat)">
+            <Input value={data.erityiset} onChange={v => onChange("erityiset", v)} placeholder="0" />
+          </Field>
+        </Section>
+      );
+    }
+
+    function App() {
+      const [lapset, setLapset] = useState([{ ika: "", erityiset: "", yot: "0" }]);
+      const [asuvalla, setAsuvalla] = useState({ tulot: "", asuminen: "", muutLapset: "0", erityiset: "", yksinhuoltaja: false });
+      const [tapaavalla, setTapaavalla] = useState({ tulot: "", asuminen: "", muutLapset: "0", erityiset: "" });
+
+      const lisaaLapsi = () => setLapset(l => [...l, { ika: "", erityiset: "", yot: "0" }]);
+      const poistaLapsi = (i) => setLapset(l => l.filter((_, idx) => idx !== i));
+      const muutaLapsi = (i, kentta, arvo) => setLapset(l => l.map((lap, idx) => idx === i ? { ...lap, [kentta]: arvo } : lap));
+      const muutaAsuvalla = (k, v) => setAsuvalla(a => ({ ...a, [k]: v }));
+      const muutaTapaavalla = (k, v) => setTapaavalla(a => ({ ...a, [k]: v }));
+
+      const laske = useCallback(() => {
+        const lapsiMaara = lapset.length;
+        const asumisOsuus = lapsenAsumisOsuus(lapsiMaara);
+        const lapsiData = lapset.map(l => {
+          const ika = parseInt(l.ika) || 0;
+          const ryhma = ikaryhmasta(ika);
+          const ylapit = YLAPITOKULUT[ryhma].base;
+          const asuminen = parseNum(asuvalla.asuminen) * asumisOsuus;
+          const erityiset = parseNum(l.erityiset);
+          const lapsilisa = lapsilisaPerLapsi(lapsiMaara);
+          const tarve = Math.max(0, ylapit + asuminen + erityiset - lapsilisa);
+          const luonapito = laskeluonapito(l.yot, ryhma);
+          return { ika, ryhma, ylapit, asuminen, erityiset, lapsilisa, tarve, luonapito, yot: l.yot };
+        });
+
+        const kokonaisTarve = lapsiData.reduce((s, l) => s + l.tarve, 0);
+        const lapsenAsumiskustannus = lapsiData.reduce((s, l) => s + l.asuminen, 0);
+        const yksinhuoltajakorotusYht = asuvalla.yksinhuoltaja
+          ? lapsiMaara * YKSINHUOLTAJAKOROTUS : 0;
+
+        const laskuKyky = (v, lisatulo = 0, lapsenAsumisvah = 0) => {
+          const tulot = parseNum(v.tulot) + lisatulo;
+          const asuminen = Math.max(0, parseNum(v.asuminen) - lapsenAsumisvah);
+          const muutVah = (parseInt(v.muutLapset) || 0) * (OMA_ELATUS * 0.12);
+          const erityiset = parseNum(v.erityiset);
+          return Math.max(0, tulot - OMA_ELATUS - asuminen - muutVah - erityiset);
+        };
+
+        const eritteleKyky = (v, lisatulo = 0, lapsenAsumisvah = 0) => {
+          const tulot = parseNum(v.tulot) + lisatulo;
+          const asuminenBrutto = parseNum(v.asuminen);
+          const asuminen = Math.max(0, asuminenBrutto - lapsenAsumisvah);
+          const muutLapset = parseInt(v.muutLapset) || 0;
+          const muutVah = muutLapset * (OMA_ELATUS * 0.12);
+          const erityiset = parseNum(v.erityiset);
+          return { tulot, asuminenBrutto, asuminen, lapsenAsumisvah, muutLapset, muutVah, erityiset };
+        };
+
+        const kykyA = laskuKyky(asuvalla, yksinhuoltajakorotusYht, lapsenAsumiskustannus);
+        const kykyB = laskuKyky(tapaavalla);
+        const kykyYht = kykyA + kykyB;
+        const osuusB = kykyYht > 0 ? kykyB / kykyYht : 0.5;
+        const kokonaisLuonapito = lapsiData.reduce((s, l) => s + l.luonapito, 0);
+        const vastuuB = kokonaisTarve * osuusB;
+        const elatusapu = Math.max(0, vastuuB - kokonaisLuonapito);
+        const erA = eritteleKyky(asuvalla, yksinhuoltajakorotusYht, lapsenAsumiskustannus);
+        const erB = eritteleKyky(tapaavalla);
+
+        return {
+          lapsiData, kokonaisTarve, kykyA, kykyB, osuusB,
+          kokonaisLuonapito, vastuuB, elatusapu,
+          lapsenAsumiskustannus, asumisOsuus,
+          yksinhuoltajakorotusYht, erA, erB,
+        };
+      }, [lapset, asuvalla, tapaavalla]);
+
+      const tulos = laske();
+      const laskettu = parseNum(asuvalla.tulot) > 0 && parseNum(tapaavalla.tulot) > 0;
+
+      return (
+        <div style={{
+          minHeight: "100vh",
+          background: "linear-gradient(145deg, #0d1f17 0%, #0a1a14 40%, #0f1e18 100%)",
+          fontFamily: "'DM Sans', sans-serif", color: "#d4e8da", padding: "40px 20px 80px",
+        }}>
+          <div style={{ maxWidth: 680, margin: "0 auto 36px" }}>
+            <div style={{ fontSize: 11, fontFamily: "'DM Mono', monospace", letterSpacing: "0.2em", color: "#7eb8a4", textTransform: "uppercase", marginBottom: 10 }}>Suuntaa antava arvio</div>
+            <h1 style={{ fontSize: "clamp(28px, 5vw, 42px)", fontWeight: 300, color: "#e8f5ee", margin: "0 0 10px", lineHeight: 1.1, letterSpacing: "-0.02em" }}>Elatuslaskuri</h1>
+            <p style={{ color: "#6a9080", fontSize: 14, margin: 0, lineHeight: 1.6 }}>
+              Perustuu oikeusministeriön ohjeeseen (OM 2007:2). Tulos on suuntaa antava eikä korvaa juridista neuvontaa.
+            </p>
+          </div>
+
+          <div style={{ maxWidth: 680, margin: "0 auto" }}>
+            <Section title="Lapset">
+              {lapset.map((l, i) => (
+                <LapsiForm key={i} lapsi={l} index={i} onChange={muutaLapsi} onRemove={poistaLapsi} />
+              ))}
+              <button onClick={lisaaLapsi} style={{
+                background: "none", border: "1px dashed rgba(126,184,164,0.3)",
+                borderRadius: 8, color: "#7eb8a4", padding: "9px 20px",
+                cursor: "pointer", fontSize: 13, fontFamily: "'DM Sans', sans-serif", width: "100%",
+              }}>+ Lisää lapsi</button>
+            </Section>
+
+            <VanhempiForm data={asuvalla} label="Lapsen kanssa asuva vanhempi" onChange={muutaAsuvalla} />
+            <VanhempiForm data={tapaavalla} label="Lasta tapaava vanhempi" onChange={muutaTapaavalla} />
+
+            {laskettu && (
+              <div style={{
+                background: "linear-gradient(135deg, rgba(126,184,164,0.1), rgba(126,184,164,0.04))",
+                border: "1px solid rgba(126,184,164,0.25)", borderRadius: 16, padding: "28px 32px",
+              }}>
+                <div style={{ fontSize: 11, fontFamily: "'DM Mono', monospace", letterSpacing: "0.16em", color: "#7eb8a4", textTransform: "uppercase", marginBottom: 22 }}>Laskelma</div>
+
+                {tulos.lapsiData.map((l, i) => (
+                  <div key={i} style={{ marginBottom: 18 }}>
+                    <div style={{ fontSize: 12, color: "#556e64", marginBottom: 6, fontFamily: "'DM Mono', monospace" }}>
+                      LAPSI {i + 1} — {l.ika} v ({YLAPITOKULUT[l.ryhma].label})
+                    </div>
+                    <Row label="Ylläpitokulut (taulukko)" value={euro(l.ylapit)} />
+                    <Row label={`Asumiskustannusosuus (${(tulos.asumisOsuus * 100).toFixed(0)} %)`} value={euro(l.asuminen)} />
+                    {l.erityiset > 0 && <Row label="Erityiset kulut" value={euro(l.erityiset)} />}
+                    <Row label="Lapsilisävähennys" value={"− " + euro(l.lapsilisa)} />
+                    <Row label="Elatuksen tarve" value={euro(l.tarve)} bold />
+                    <Row
+                      label={l.luonapito > 0 ? `Luonapitovähennys (${LUONAPITO_HAARUKAT.find(h => h.value === l.yot)?.label || ""})` : "Ei luonapitovähennystä (alle 7 yötä/kk)"}
+                      value={l.luonapito > 0 ? "− " + euro(l.luonapito) : "0,00 €"}
+                      muted={l.luonapito === 0}
+                    />
+                  </div>
+                ))}
+
+                <div style={{ borderTop: "1px solid rgba(126,184,164,0.15)", paddingTop: 14, marginTop: 4 }}>
+                  <Row label="Elatuksen tarve yhteensä" value={euro(tulos.kokonaisTarve)} bold />
+                </div>
+
+                <div style={{ marginTop: 20 }}>
+                  <div style={{ fontSize: 11, fontFamily: "'DM Mono', monospace", letterSpacing: "0.12em", color: "#556e64", textTransform: "uppercase", marginBottom: 8 }}>Asuvan vanhemman elatuskyky</div>
+                  <Row label="Nettotulot" value={euro(parseNum(asuvalla.tulot))} />
+                  {tulos.yksinhuoltajakorotusYht > 0 && (
+                    <Row label={`Yksinhuoltajakorotus (${lapset.length} × 73,30 €)`} value={"+ " + euro(tulos.yksinhuoltajakorotusYht)} />
+                  )}
+                  <Row label="Oma elatusvastuu" value={"− " + euro(OMA_ELATUS)} />
+                  <Row label="Asumiskulut (brutto)" value={"− " + euro(tulos.erA.asuminenBrutto)} />
+                  <Row label="Lapsen asumiskustannusosuus" value={"+ " + euro(tulos.erA.lapsenAsumisvah)} />
+                  {tulos.erA.muutLapset > 0 && <Row label={`Muut lapset (${tulos.erA.muutLapset} kpl)`} value={"− " + euro(tulos.erA.muutVah)} />}
+                  {tulos.erA.erityiset > 0 && <Row label="Erityiset kulut" value={"− " + euro(tulos.erA.erityiset)} />}
+                  <Row label="Elatuskyky yhteensä" value={euro(tulos.kykyA)} bold />
+                </div>
+
+                <div style={{ marginTop: 16 }}>
+                  <div style={{ fontSize: 11, fontFamily: "'DM Mono', monospace", letterSpacing: "0.12em", color: "#556e64", textTransform: "uppercase", marginBottom: 8 }}>Tapaavan vanhemman elatuskyky</div>
+                  <Row label="Nettotulot" value={euro(parseNum(tapaavalla.tulot))} />
+                  <Row label="Oma elatusvastuu" value={"− " + euro(OMA_ELATUS)} />
+                  <Row label="Asumiskulut" value={"− " + euro(tulos.erB.asuminen)} />
+                  {tulos.erB.muutLapset > 0 && <Row label={`Muut lapset (${tulos.erB.muutLapset} kpl)`} value={"− " + euro(tulos.erB.muutVah)} />}
+                  {tulos.erB.erityiset > 0 && <Row label="Erityiset kulut" value={"− " + euro(tulos.erB.erityiset)} />}
+                  <Row label="Elatuskyky yhteensä" value={euro(tulos.kykyB)} bold />
+                </div>
+
+                <div style={{ marginTop: 16 }}>
+                  <div style={{ fontSize: 11, fontFamily: "'DM Mono', monospace", letterSpacing: "0.12em", color: "#556e64", textTransform: "uppercase", marginBottom: 8 }}>Vastuunjako</div>
+                  <Row label="Tapaavan vanhemman vastuu-osuus" value={(tulos.osuusB * 100).toFixed(0) + " %"} />
+                  <Row label="Vastuu ennen luonapitovähennystä" value={euro(tulos.vastuuB)} />
+                  {tulos.kokonaisLuonapito > 0 && (
+                    <Row label="Luonapitovähennys yhteensä" value={"− " + euro(tulos.kokonaisLuonapito)} />
+                  )}
+                </div>
+
+                <div style={{
+                  marginTop: 20, padding: "18px 20px",
+                  background: "rgba(126,184,164,0.08)", borderRadius: 10,
+                  border: "1px solid rgba(126,184,164,0.2)",
+                  display: "flex", justifyContent: "space-between", alignItems: "center",
+                }}>
+                  <span style={{ fontSize: 14, color: "#b8c8c0" }}>Elatusapu (suuntaa antava)</span>
+                  <span style={{ fontSize: 28, fontWeight: 500, color: "#7eb8a4", fontFamily: "'DM Mono', monospace" }}>
+                    {euro(tulos.elatusapu)}<span style={{ fontSize: 14, color: "#556e64" }}>/kk</span>
+                  </span>
+                </div>
+
+                <p style={{ fontSize: 12, color: "#445a50", marginTop: 16, lineHeight: 1.6 }}>
+                  Laskelma on suuntaa antava. Elatusavun lopullinen suuruus määräytyy aina yksilöllisen harkinnan perusteella. Hae aina vahvistus lastenvalvojalta tai oikeudelta.
+                </p>
+              </div>
+            )}
+
+            {!laskettu && (
+              <div style={{ textAlign: "center", padding: "32px", color: "#445a50", fontSize: 13, fontFamily: "'DM Mono', monospace", letterSpacing: "0.05em" }}>
+                Täytä molempien vanhempien tulotiedot nähdäksesi laskelma
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById("root"));
+    root.render(<App />);
+  </script>
+</body>
+</html>
